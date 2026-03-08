@@ -1,0 +1,4 @@
+node_modules/
+.app_uuid
+.app_api_key
+.env

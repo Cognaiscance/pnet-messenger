@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pnet Messenger</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3250;
+      --accent: #5c7cfa;
+      --accent-hover: #4a66d9;
+      --text: #e2e4f0;
+      --text-muted: #7b80a0;
+      --sent-bg: #1e3a5f;
+      --recv-bg: #22263a;
+      --success: #40c057;
+      --warning: #f59f00;
+      --danger: #fa5252;
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+    /* Status bar */
+    #status-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 18px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    #status-bar h1 { font-size: 15px; font-weight: 600; margin-right: auto; }
+    #status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); flex-shrink: 0; transition: background .3s; }
+    #status-dot.connected { background: var(--success); }
+    #status-dot.error { background: var(--danger); }
+    #status-text { font-size: 12px; color: var(--text-muted); }
+
+    /* Layout */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* Sidebar */
+    #sidebar {
+      width: 280px; min-width: 220px; background: var(--surface);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
+    }
+
+    .section { padding: 14px; border-bottom: 1px solid var(--border); }
+    .section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin-bottom: 8px; }
+
+    /* Info box */
+    .info-row { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+    .info-row:last-child { margin-bottom: 0; }
+    .info-label { font-size: 10px; color: var(--text-muted); }
+    .info-value {
+      font-size: 11px; font-family: monospace; background: var(--surface2);
+      padding: 4px 7px; border-radius: 4px; border: 1px solid var(--border);
+      word-break: break-all; cursor: pointer; color: var(--text);
+    }
+    .info-value:hover { border-color: var(--accent); }
+    .info-value[title]:hover::after { content: attr(title); }
+
+    /* Contact select */
+    select, input[type="text"] {
+      width: 100%; background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 10px; font-size: 13px; font-family: var(--font);
+    }
+    select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%237b80a0' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+    select:disabled, input:disabled { opacity: .45; cursor: not-allowed; }
+    select:focus, input:focus { outline: none; border-color: var(--accent); }
+
+    .field { margin-bottom: 8px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+
+    .btn-sm {
+      margin-top: 8px; width: 100%; background: transparent; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px; font-size: 12px;
+      cursor: pointer; transition: color .2s, border-color .2s; font-family: var(--font);
+    }
+    .btn-sm:hover { color: var(--text); border-color: var(--accent); }
+
+    /* Chat */
+    #chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #chat-header { padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
+    #chat-header span { color: var(--text); font-weight: 500; }
+
+    #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+
+    .msg { max-width: 72%; padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.55; word-break: break-word; }
+    .msg.sent { background: var(--sent-bg); border: 1px solid #2a4a7f; align-self: flex-end; border-bottom-right-radius: 3px; }
+    .msg.received { background: var(--recv-bg); border: 1px solid var(--border); align-self: flex-start; border-bottom-left-radius: 3px; }
+    .msg .meta { font-size: 10px; color: var(--text-muted); margin-top: 5px; }
+    .msg.sent .meta { text-align: right; }
+    .msg .text { white-space: pre-wrap; }
+
+    #empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-muted); gap: 8px; pointer-events: none; }
+    #empty-state .icon { font-size: 36px; opacity: .4; }
+
+    /* Compose */
+    #compose { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+    #msg-input { flex: 1; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; font-size: 13px; font-family: var(--font); resize: none; min-height: 40px; max-height: 120px; overflow-y: auto; line-height: 1.5; }
+    #msg-input:focus { outline: none; border-color: var(--accent); }
+    #msg-input:disabled { opacity: .45; }
+    #send-btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600; font-family: var(--font); cursor: pointer; align-self: flex-end; transition: background .2s; white-space: nowrap; }
+    #send-btn:hover:not(:disabled) { background: var(--accent-hover); }
+    #send-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="status-bar">
+  <h1>pnet Messenger</h1>
+  <div id="status-dot"></div>
+  <div id="status-text">Initializing…</div>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+
+    <!-- Your info (share with contacts) -->
+    <div class="section">
+      <div class="section-title">Your info</div>
+      <div class="info-row">
+        <div class="info-label">User UUID</div>
+        <div class="info-value" id="my-user-uuid" title="Click to copy">—</div>
+      </div>
+      <div class="info-row">
+        <div class="info-label">Device</div>
+        <div class="info-value" id="my-device-uuid" title="Click to copy">—</div>
+      </div>
+      <div class="info-row">
+        <div class="info-label">App UUID</div>
+        <div class="info-value" id="my-app-uuid" title="Click to copy">—</div>
+      </div>
+    </div>
+
+    <!-- Contact selector -->
+    <div class="section">
+      <div class="section-title">Contact</div>
+      <div class="field">
+        <select id="contact-select" disabled>
+          <option value="">— select contact —</option>
+        </select>
+      </div>
+      <button class="btn-sm" id="refresh-btn">↻ Refresh contacts</button>
+    </div>
+
+    <!-- Target device & app UUIDs (entered manually) -->
+    <div class="section" id="target-section" style="display:none">
+      <div class="section-title">Send to</div>
+      <div class="field">
+        <label for="target-device-uuid">Device UUID</label>
+        <input type="text" id="target-device-uuid" placeholder="xxxxxxxx-xxxx-…">
+      </div>
+      <div class="field">
+        <label for="target-app-uuid">App UUID</label>
+        <input type="text" id="target-app-uuid" placeholder="xxxxxxxx-xxxx-…">
+      </div>
+    </div>
+
+  </div>
+
+  <div id="chat">
+    <div id="chat-header">To: <span id="chat-target">—</span></div>
+
+    <div id="messages">
+      <div id="empty-state">
+        <div class="icon">💬</div>
+        <p>No messages yet</p>
+      </div>
+    </div>
+
+    <div id="compose">
+      <textarea id="msg-input" placeholder="Type a message… (Enter to send, Shift+Enter for newline)" rows="1" disabled></textarea>
+      <button id="send-btn" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // State
+  let contacts = [];
+  let selectedContact = null;
+  let approved = false;
+  let myInfo = {};
+
+  // DOM
+  const statusDot       = document.getElementById('status-dot');
+  const statusText      = document.getElementById('status-text');
+  const myUserUuidEl    = document.getElementById('my-user-uuid');
+  const myDeviceUuidEl  = document.getElementById('my-device-uuid');
+  const myAppUuidEl     = document.getElementById('my-app-uuid');
+  const contactSel      = document.getElementById('contact-select');
+  const refreshBtn      = document.getElementById('refresh-btn');
+  const targetSection   = document.getElementById('target-section');
+  const targetDeviceEl  = document.getElementById('target-device-uuid');
+  const targetAppEl     = document.getElementById('target-app-uuid');
+  const chatTarget      = document.getElementById('chat-target');
+  const messagesEl      = document.getElementById('messages');
+  const emptyState      = document.getElementById('empty-state');
+  const msgInput        = document.getElementById('msg-input');
+  const sendBtn         = document.getElementById('send-btn');
+
+  // Click-to-copy for info values
+  document.querySelectorAll('.info-value').forEach(el => {
+    el.addEventListener('click', () => {
+      const text = el.dataset.copyValue || el.textContent;
+      if (text && text !== '—') {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = el.textContent;
+          el.textContent = 'Copied!';
+          setTimeout(() => { el.textContent = orig; }, 1000);
+        });
+      }
+    });
+  });
+
+  // Status
+  function applyStatus(s) {
+    approved = s.approved;
+    if (!s.registered) {
+      statusDot.className = '';
+      statusText.textContent = 'Registering with pnet…';
+    } else if (!s.approved) {
+      statusDot.className = '';
+      statusText.textContent = 'Pending approval — visit pnet UI to accept';
+    } else {
+      statusDot.className = 'connected';
+      statusText.textContent = s.node_alias ? `Connected as ${s.node_alias}` : 'Connected';
+    }
+    // Populate "Your info" from status (populated after approval via fetchNodeInfo)
+    if (s.user_uuid)   myUserUuidEl.textContent  = s.user_uuid;
+    if (s.device_uuid) {
+      const label = s.device_alias ? `${s.device_alias}  (${s.device_uuid})` : s.device_uuid;
+      myDeviceUuidEl.textContent = label;
+      myDeviceUuidEl.dataset.copyValue = s.device_uuid;
+    }
+    if (s.app_uuid)    myAppUuidEl.textContent   = s.app_uuid;
+    if (s.approved && contacts.length === 0) loadContacts();
+    updateSendability();
+  }
+
+  // Load contacts from pnet
+  async function loadContacts() {
+    try {
+      const res = await fetch('/api/node');
+      if (!res.ok) return;
+      const data = await res.json();
+      contacts = data?.user?.contacts ?? [];
+      rebuildContactSelect();
+    } catch (e) {
+      console.warn('Failed to load contacts', e);
+    }
+  }
+
+  function rebuildContactSelect() {
+    const prev = contactSel.value;
+    contactSel.innerHTML = '<option value="">— select contact —</option>';
+    for (const c of contacts) {
+      const label = c.alias ? `${c.alias}` : c.uuid.slice(0, 12) + '…';
+      contactSel.appendChild(new Option(label, c.uuid));
+    }
+    contactSel.disabled = !approved || contacts.length === 0;
+    if (prev && contacts.find(c => c.uuid === prev)) contactSel.value = prev;
+    onContactChange();
+  }
+
+  function onContactChange() {
+    const uuid = contactSel.value;
+    selectedContact = contacts.find(c => c.uuid === uuid) || null;
+    targetSection.style.display = selectedContact ? '' : 'none';
+    updateChatTarget();
+    updateSendability();
+  }
+
+  function updateChatTarget() {
+    if (!selectedContact) {
+      chatTarget.textContent = '—';
+    } else {
+      chatTarget.textContent = selectedContact.alias || selectedContact.uuid;
+    }
+  }
+
+  function updateSendability() {
+    const canSend = approved && selectedContact && targetDeviceEl.value.trim() && targetAppEl.value.trim();
+    msgInput.disabled = !canSend;
+    sendBtn.disabled  = !canSend;
+  }
+
+  // Messages
+  function renderMessage(msg) {
+    emptyState.remove();
+    const div = document.createElement('div');
+    div.className = `msg ${msg.direction}`;
+    div.dataset.id = msg.id;
+    const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let meta = time;
+    if (msg.direction === 'received' && msg.from_user_uuid) {
+      const contact = contacts.find(c => c.uuid === msg.from_user_uuid);
+      const name = contact?.alias || msg.from_user_uuid.slice(0, 8) + '…';
+      meta = `From ${name} · ${time}`;
+    } else if (msg.direction === 'sent') {
+      const contact = selectedContact || contacts.find(c => c.uuid === msg.to_user_uuid);
+      const name = contact?.alias || (msg.to_user_uuid ? msg.to_user_uuid.slice(0, 8) + '…' : '?');
+      meta = `To ${name} · ${time}`;
+    }
+    div.innerHTML = `<div class="text">${esc(msg.text)}</div><div class="meta">${esc(meta)}</div>`;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Send
+  async function sendMessage() {
+    const text    = msgInput.value.trim();
+    const devUuid = targetDeviceEl.value.trim();
+    const appUuid = targetAppEl.value.trim();
+    if (!text || !selectedContact || !devUuid || !appUuid) return;
+
+    msgInput.value = '';
+    msgInput.style.height = '';
+    sendBtn.disabled = true;
+
+    try {
+      const res = await fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to_user_uuid:   selectedContact.uuid,
+          to_device_uuid: devUuid,
+          to_app_uuid:    appUuid,
+          payload:        text,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) alert('Send failed: ' + JSON.stringify(data.error));
+    } catch (e) {
+      alert('Send failed: ' + e.message);
+    } finally {
+      sendBtn.disabled = false;
+      updateSendability();
+    }
+  }
+
+  // SSE
+  let evtSource = null;
+  function connectSSE() {
+    if (evtSource) evtSource.close();
+    evtSource = new EventSource('/events');
+    evtSource.onmessage = (e) => {
+      let ev; try { ev = JSON.parse(e.data); } catch { return; }
+      if (ev.type === 'status')  applyStatus(ev.status);
+      if (ev.type === 'message') renderMessage(ev.message);
+    };
+    evtSource.onerror = () => {
+      evtSource.close(); evtSource = null;
+      setTimeout(connectSSE, 3000);
+    };
+  }
+
+  // Init
+  async function init() {
+    try {
+      const res = await fetch('/api/status');
+      if (res.ok) applyStatus(await res.json());
+    } catch {}
+    try {
+      const res = await fetch('/api/messages');
+      if (res.ok) { const d = await res.json(); d.messages.forEach(renderMessage); }
+    } catch {}
+    connectSSE();
+  }
+
+  // Events
+  contactSel.addEventListener('change', onContactChange);
+  refreshBtn.addEventListener('click', loadContacts);
+  targetDeviceEl.addEventListener('input', updateSendability);
+  targetAppEl.addEventListener('input', updateSendability);
+  sendBtn.addEventListener('click', sendMessage);
+  msgInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  msgInput.addEventListener('input', () => {
+    msgInput.style.height = 'auto';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
