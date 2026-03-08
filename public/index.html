@@ -55,14 +55,24 @@
     .info-row:last-child { margin-bottom: 0; }
     .info-label { font-size: 10px; color: var(--text-muted); }
     .info-value {
-      font-size: 11px; font-family: monospace; background: var(--surface2);
+      font-size: 12px; background: var(--surface2);
       padding: 4px 7px; border-radius: 4px; border: 1px solid var(--border);
-      word-break: break-all; cursor: pointer; color: var(--text);
+      word-break: break-word; cursor: pointer; color: var(--text);
     }
     .info-value:hover { border-color: var(--accent); }
-    .info-value[title]:hover::after { content: attr(title); }
+    .info-value .uuid-hint { font-size: 10px; color: var(--text-muted); margin-top: 1px; font-family: monospace; display: block; word-break: break-all; }
 
-    /* Contact select */
+    /* Tab bar */
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 10px; }
+    .tab {
+      flex: 1; background: transparent; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px;
+      cursor: pointer; transition: color .15s, border-color .15s, background .15s; font-family: var(--font);
+    }
+    .tab:hover { color: var(--text); border-color: var(--accent); }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* Contact/device select */
     select, input[type="text"] {
       width: 100%; background: var(--surface2); color: var(--text);
       border: 1px solid var(--border); border-radius: 6px;
@@ -125,44 +135,64 @@
 <div id="main">
   <div id="sidebar">
 
-    <!-- Your info (share with contacts) -->
+    <!-- Your info -->
     <div class="section">
       <div class="section-title">Your info</div>
       <div class="info-row">
-        <div class="info-label">User UUID</div>
-        <div class="info-value" id="my-user-uuid" title="Click to copy">—</div>
+        <div class="info-label">User</div>
+        <div class="info-value" id="my-user-uuid">—</div>
       </div>
       <div class="info-row">
         <div class="info-label">Device</div>
-        <div class="info-value" id="my-device-uuid" title="Click to copy">—</div>
+        <div class="info-value" id="my-device-uuid">—</div>
       </div>
       <div class="info-row">
-        <div class="info-label">App UUID</div>
-        <div class="info-value" id="my-app-uuid" title="Click to copy">—</div>
+        <div class="info-label">App</div>
+        <div class="info-value" id="my-app-uuid">—</div>
       </div>
     </div>
 
-    <!-- Contact selector -->
+    <!-- Recipient -->
     <div class="section">
-      <div class="section-title">Contact</div>
-      <div class="field">
-        <select id="contact-select" disabled>
-          <option value="">— select contact —</option>
-        </select>
-      </div>
-      <button class="btn-sm" id="refresh-btn">↻ Refresh contacts</button>
-    </div>
-
-    <!-- Target device & app UUIDs (entered manually) -->
-    <div class="section" id="target-section" style="display:none">
       <div class="section-title">Send to</div>
-      <div class="field">
-        <label for="target-device-uuid">Device UUID</label>
-        <input type="text" id="target-device-uuid" placeholder="xxxxxxxx-xxxx-…">
+      <div class="tab-bar">
+        <button class="tab active" id="tab-contact">Contact</button>
+        <button class="tab" id="tab-self">My devices</button>
       </div>
-      <div class="field">
-        <label for="target-app-uuid">App UUID</label>
-        <input type="text" id="target-app-uuid" placeholder="xxxxxxxx-xxxx-…">
+
+      <!-- Contact mode -->
+      <div id="mode-contact">
+        <div class="field">
+          <select id="contact-select" disabled>
+            <option value="">— select contact —</option>
+          </select>
+        </div>
+        <div id="contact-target-fields" style="display:none">
+          <div class="field">
+            <label for="target-device-uuid">Device UUID</label>
+            <input type="text" id="target-device-uuid" placeholder="xxxxxxxx-xxxx-…">
+          </div>
+          <div class="field">
+            <label for="target-app-uuid">App UUID</label>
+            <input type="text" id="target-app-uuid" placeholder="xxxxxxxx-xxxx-…">
+          </div>
+        </div>
+        <button class="btn-sm" id="refresh-btn">↻ Refresh</button>
+      </div>
+
+      <!-- My devices mode -->
+      <div id="mode-self" style="display:none">
+        <div class="field">
+          <select id="device-select" disabled>
+            <option value="">— select device —</option>
+          </select>
+        </div>
+        <div class="field">
+          <select id="app-select" disabled>
+            <option value="">— select app —</option>
+          </select>
+        </div>
+        <button class="btn-sm" id="refresh-self-btn">↻ Refresh</button>
       </div>
     </div>
 
@@ -189,7 +219,11 @@
 (() => {
   // State
   let contacts = [];
+  let myDevices = [];        // user.devices from /api/node
+  let recipientMode = 'contact';  // 'contact' | 'self'
   let selectedContact = null;
+  let selectedDevice = null; // { uuid, alias }
+  let selectedApp = null;    // { app_uuid, app_name }
   let approved = false;
   let myInfo = {};
 
@@ -199,11 +233,18 @@
   const myUserUuidEl    = document.getElementById('my-user-uuid');
   const myDeviceUuidEl  = document.getElementById('my-device-uuid');
   const myAppUuidEl     = document.getElementById('my-app-uuid');
+  const tabContact      = document.getElementById('tab-contact');
+  const tabSelf         = document.getElementById('tab-self');
+  const modeContact     = document.getElementById('mode-contact');
+  const modeSelf        = document.getElementById('mode-self');
   const contactSel      = document.getElementById('contact-select');
+  const contactTargetFields = document.getElementById('contact-target-fields');
   const refreshBtn      = document.getElementById('refresh-btn');
-  const targetSection   = document.getElementById('target-section');
   const targetDeviceEl  = document.getElementById('target-device-uuid');
   const targetAppEl     = document.getElementById('target-app-uuid');
+  const deviceSel       = document.getElementById('device-select');
+  const appSel          = document.getElementById('app-select');
+  const refreshSelfBtn  = document.getElementById('refresh-self-btn');
   const chatTarget      = document.getElementById('chat-target');
   const messagesEl      = document.getElementById('messages');
   const emptyState      = document.getElementById('empty-state');
@@ -213,20 +254,47 @@
   // Click-to-copy for info values
   document.querySelectorAll('.info-value').forEach(el => {
     el.addEventListener('click', () => {
-      const text = el.dataset.copyValue || el.textContent;
+      const text = el.dataset.copyValue || el.querySelector('.uuid-hint')?.textContent || el.textContent;
       if (text && text !== '—') {
-        navigator.clipboard.writeText(text).then(() => {
-          const orig = el.textContent;
+        navigator.clipboard.writeText(text.trim()).then(() => {
+          const orig = el.innerHTML;
           el.textContent = 'Copied!';
-          setTimeout(() => { el.textContent = orig; }, 1000);
+          setTimeout(() => { el.innerHTML = orig; }, 1000);
         });
       }
     });
   });
 
+  function setInfoValue(el, alias, uuid) {
+    if (!alias && !uuid) { el.innerHTML = '—'; el.dataset.copyValue = ''; return; }
+    if (alias) {
+      el.innerHTML = esc(alias) + (uuid ? `<span class="uuid-hint">${esc(uuid)}</span>` : '');
+      el.dataset.copyValue = uuid || alias;
+    } else {
+      el.innerHTML = `<span class="uuid-hint">${esc(uuid)}</span>`;
+      el.dataset.copyValue = uuid;
+    }
+  }
+
+  // Tab switching
+  tabContact.addEventListener('click', () => setMode('contact'));
+  tabSelf.addEventListener('click', () => setMode('self'));
+
+  function setMode(mode) {
+    recipientMode = mode;
+    tabContact.classList.toggle('active', mode === 'contact');
+    tabSelf.classList.toggle('active', mode === 'self');
+    modeContact.style.display = mode === 'contact' ? '' : 'none';
+    modeSelf.style.display = mode === 'self' ? '' : 'none';
+    if (mode === 'self' && myDevices.length === 0) loadNodeData();
+    updateChatTarget();
+    updateSendability();
+  }
+
   // Status
   function applyStatus(s) {
     approved = s.approved;
+    myInfo = s;
     if (!s.registered) {
       statusDot.className = '';
       statusText.textContent = 'Registering with pnet…';
@@ -237,28 +305,25 @@
       statusDot.className = 'connected';
       statusText.textContent = s.node_alias ? `Connected as ${s.node_alias}` : 'Connected';
     }
-    // Populate "Your info" from status (populated after approval via fetchNodeInfo)
-    if (s.user_uuid)   myUserUuidEl.textContent  = s.user_uuid;
-    if (s.device_uuid) {
-      const label = s.device_alias ? `${s.device_alias}  (${s.device_uuid})` : s.device_uuid;
-      myDeviceUuidEl.textContent = label;
-      myDeviceUuidEl.dataset.copyValue = s.device_uuid;
-    }
-    if (s.app_uuid)    myAppUuidEl.textContent   = s.app_uuid;
-    if (s.approved && contacts.length === 0) loadContacts();
+    setInfoValue(myUserUuidEl, s.node_alias, s.user_uuid);
+    setInfoValue(myDeviceUuidEl, s.device_alias, s.device_uuid);
+    setInfoValue(myAppUuidEl, s.app_name, s.app_uuid);
+    if (s.approved && contacts.length === 0) loadNodeData();
     updateSendability();
   }
 
-  // Load contacts from pnet
-  async function loadContacts() {
+  // Load node data (contacts + own devices)
+  async function loadNodeData() {
     try {
       const res = await fetch('/api/node');
       if (!res.ok) return;
       const data = await res.json();
       contacts = data?.user?.contacts ?? [];
+      myDevices = data?.user?.devices ?? [];
       rebuildContactSelect();
+      rebuildDeviceSelect();
     } catch (e) {
-      console.warn('Failed to load contacts', e);
+      console.warn('Failed to load node data', e);
     }
   }
 
@@ -266,7 +331,7 @@
     const prev = contactSel.value;
     contactSel.innerHTML = '<option value="">— select contact —</option>';
     for (const c of contacts) {
-      const label = c.alias ? `${c.alias}` : c.uuid.slice(0, 12) + '…';
+      const label = c.alias || c.uuid.slice(0, 12) + '…';
       contactSel.appendChild(new Option(label, c.uuid));
     }
     contactSel.disabled = !approved || contacts.length === 0;
@@ -274,29 +339,103 @@
     onContactChange();
   }
 
+  function rebuildDeviceSelect() {
+    const prev = deviceSel.value;
+    deviceSel.innerHTML = '<option value="">— select device —</option>';
+    // Exclude our own current device from the list
+    for (const d of myDevices) {
+      const label = d.alias || d.uuid.slice(0, 12) + '…';
+      deviceSel.appendChild(new Option(label, d.uuid));
+    }
+    deviceSel.disabled = !approved || myDevices.length === 0;
+    if (prev && myDevices.find(d => d.uuid === prev)) deviceSel.value = prev;
+    onDeviceChange();
+  }
+
   function onContactChange() {
     const uuid = contactSel.value;
     selectedContact = contacts.find(c => c.uuid === uuid) || null;
-    targetSection.style.display = selectedContact ? '' : 'none';
+    contactTargetFields.style.display = selectedContact ? '' : 'none';
+    updateChatTarget();
+    updateSendability();
+  }
+
+  function onDeviceChange() {
+    const uuid = deviceSel.value;
+    selectedDevice = myDevices.find(d => d.uuid === uuid) || null;
+    selectedApp = null;
+    appSel.innerHTML = '<option value="">— select app —</option>';
+    if (selectedDevice) {
+      const apps = selectedDevice.apps ?? [];
+      for (const a of apps) {
+        const label = a.app_name || a.app_uuid.slice(0, 12) + '…';
+        appSel.appendChild(new Option(label, a.app_uuid));
+      }
+      appSel.disabled = apps.length === 0;
+    } else {
+      appSel.disabled = true;
+    }
+    onAppChange();
+  }
+
+  function onAppChange() {
+    const uuid = appSel.value;
+    if (selectedDevice) {
+      selectedApp = (selectedDevice.apps ?? []).find(a => a.app_uuid === uuid) || null;
+    } else {
+      selectedApp = null;
+    }
     updateChatTarget();
     updateSendability();
   }
 
   function updateChatTarget() {
-    if (!selectedContact) {
-      chatTarget.textContent = '—';
+    if (recipientMode === 'contact') {
+      chatTarget.textContent = selectedContact
+        ? (selectedContact.alias || selectedContact.uuid)
+        : '—';
     } else {
-      chatTarget.textContent = selectedContact.alias || selectedContact.uuid;
+      if (selectedDevice && selectedApp) {
+        const dev = selectedDevice.alias || selectedDevice.uuid.slice(0, 8) + '…';
+        const appName = selectedApp.app_name || selectedApp.app_uuid.slice(0, 8) + '…';
+        chatTarget.textContent = `${dev} / ${appName}`;
+      } else if (selectedDevice) {
+        chatTarget.textContent = selectedDevice.alias || selectedDevice.uuid.slice(0, 8) + '…';
+      } else {
+        chatTarget.textContent = '—';
+      }
     }
   }
 
   function updateSendability() {
-    const canSend = approved && selectedContact && targetDeviceEl.value.trim() && targetAppEl.value.trim();
+    let canSend = false;
+    if (approved) {
+      if (recipientMode === 'contact') {
+        canSend = !!(selectedContact && targetDeviceEl.value.trim() && targetAppEl.value.trim());
+      } else {
+        canSend = !!(selectedDevice && selectedApp);
+      }
+    }
     msgInput.disabled = !canSend;
     sendBtn.disabled  = !canSend;
   }
 
   // Messages
+  function resolveLabel(userUuid, deviceUuid) {
+    // Check contacts
+    const contact = contacts.find(c => c.uuid === userUuid);
+    if (contact) return contact.alias || userUuid.slice(0, 8) + '…';
+    // Check own devices
+    if (userUuid === myInfo.user_uuid) {
+      if (deviceUuid) {
+        const dev = myDevices.find(d => d.uuid === deviceUuid);
+        if (dev) return (dev.alias || deviceUuid.slice(0, 8) + '…') + ' (me)';
+      }
+      return (myInfo.node_alias || 'me') + ' (me)';
+    }
+    return userUuid ? userUuid.slice(0, 8) + '…' : '?';
+  }
+
   function renderMessage(msg) {
     emptyState.remove();
     const div = document.createElement('div');
@@ -304,13 +443,11 @@
     div.dataset.id = msg.id;
     const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     let meta = time;
-    if (msg.direction === 'received' && msg.from_user_uuid) {
-      const contact = contacts.find(c => c.uuid === msg.from_user_uuid);
-      const name = contact?.alias || msg.from_user_uuid.slice(0, 8) + '…';
+    if (msg.direction === 'received') {
+      const name = resolveLabel(msg.from_user_uuid, msg.from_device_uuid);
       meta = `From ${name} · ${time}`;
     } else if (msg.direction === 'sent') {
-      const contact = selectedContact || contacts.find(c => c.uuid === msg.to_user_uuid);
-      const name = contact?.alias || (msg.to_user_uuid ? msg.to_user_uuid.slice(0, 8) + '…' : '?');
+      const name = resolveLabel(msg.to_user_uuid, msg.to_device_uuid);
       meta = `To ${name} · ${time}`;
     }
     div.innerHTML = `<div class="text">${esc(msg.text)}</div><div class="meta">${esc(meta)}</div>`;
@@ -324,10 +461,21 @@
 
   // Send
   async function sendMessage() {
-    const text    = msgInput.value.trim();
-    const devUuid = targetDeviceEl.value.trim();
-    const appUuid = targetAppEl.value.trim();
-    if (!text || !selectedContact || !devUuid || !appUuid) return;
+    const text = msgInput.value.trim();
+    if (!text) return;
+
+    let toUserUuid, toDeviceUuid, toAppUuid;
+    if (recipientMode === 'contact') {
+      if (!selectedContact || !targetDeviceEl.value.trim() || !targetAppEl.value.trim()) return;
+      toUserUuid  = selectedContact.uuid;
+      toDeviceUuid = targetDeviceEl.value.trim();
+      toAppUuid    = targetAppEl.value.trim();
+    } else {
+      if (!selectedDevice || !selectedApp) return;
+      toUserUuid  = myInfo.user_uuid;
+      toDeviceUuid = selectedDevice.uuid;
+      toAppUuid    = selectedApp.app_uuid;
+    }
 
     msgInput.value = '';
     msgInput.style.height = '';
@@ -337,12 +485,7 @@
       const res = await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to_user_uuid:   selectedContact.uuid,
-          to_device_uuid: devUuid,
-          to_app_uuid:    appUuid,
-          payload:        text,
-        }),
+        body: JSON.stringify({ to_user_uuid: toUserUuid, to_device_uuid: toDeviceUuid, to_app_uuid: toAppUuid, payload: text }),
       });
       const data = await res.json();
       if (!res.ok) alert('Send failed: ' + JSON.stringify(data.error));
@@ -385,7 +528,10 @@
 
   // Events
   contactSel.addEventListener('change', onContactChange);
-  refreshBtn.addEventListener('click', loadContacts);
+  deviceSel.addEventListener('change', onDeviceChange);
+  appSel.addEventListener('change', onAppChange);
+  refreshBtn.addEventListener('click', loadNodeData);
+  refreshSelfBtn.addEventListener('click', loadNodeData);
   targetDeviceEl.addEventListener('input', updateSendability);
   targetAppEl.addEventListener('input', updateSendability);
   sendBtn.addEventListener('click', sendMessage);

@@ -112,6 +112,7 @@ function getStatus() {
     device_uuid: state.deviceUuid,
     device_alias: state.deviceAlias,
     app_uuid: config.APP_UUID,
+    app_name: config.APP_NAME,
     app_host: config.APP_HOST,
   };
 }
