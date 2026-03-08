@@ -12,9 +12,9 @@ app.use(express.static(join(__dirname, 'public')));
 // In-memory state
 // ---------------------------------------------------------------------------
 const state = {
-  pnetApiKey: null,       // Bearer token received from pnet after approval
-  registered: false,      // Whether we've successfully POSTed to /api/register
-  approved: false,        // Whether pnet has called back with an api_key
+  pnetApiKey: config.PNET_API_KEY, // Bearer token received from pnet after approval (persisted)
+  registered: !!config.PNET_API_KEY, // Already registered if we have a saved key
+  approved: !!config.PNET_API_KEY,   // Already approved if we have a saved key
   nodeAlias: null,        // Our node's alias, fetched after approval
   userUuid: null,         // Our user UUID
   deviceUuid: null,       // Our app's device UUID (from app info)
@@ -72,6 +72,13 @@ async function register() {
       state.registered = true;
       pushSSE({ type: 'status', status: getStatus() });
       return; // success – wait for /receive_key callback
+    } else if (res.status === 422) {
+      // Already registered — don't retry, just wait for /receive_key
+      const text = await res.text();
+      console.warn(`[register] Already registered with pnet (422): ${text}`);
+      state.registered = true;
+      pushSSE({ type: 'status', status: getStatus() });
+      return;
     } else {
       const text = await res.text();
       console.warn(`[register] pnet returned ${res.status}: ${text}`);
@@ -80,7 +87,7 @@ async function register() {
     console.warn('[register] Could not reach pnet, retrying in 10 s:', err.message);
   }
 
-  // Retry after 10 seconds
+  // Retry after 10 seconds (only on network errors, not on 422)
   setTimeout(register, 10_000);
 }
 
@@ -130,6 +137,7 @@ app.post('/receive_key', (req, res) => {
   console.log('[receive_key] Received pnet api_key');
   state.pnetApiKey = api_key;
   state.approved = true;
+  config.saveFile(config.PNET_KEY_FILE, api_key);
   res.json({ ok: true });
 
   // Kick off a node info fetch to get our alias
@@ -294,5 +302,10 @@ app.listen(config.APP_PORT, () => {
   console.log(`APP_UUID: ${config.APP_UUID}`);
   console.log(`APP_HOST: ${config.APP_HOST}`);
   console.log(`PNET_URL: ${config.PNET_URL}`);
-  register();
+  if (config.PNET_API_KEY) {
+    console.log('[startup] Found persisted pnet api_key — skipping registration');
+    fetchNodeInfo();
+  } else {
+    register();
+  }
 });
