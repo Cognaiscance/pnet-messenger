@@ -233,6 +233,17 @@ app.get('/api/node', async (_req, res) => {
       return res.status(pnetRes.status).json({ error: text });
     }
     const data = await pnetRes.json();
+    // Update cached state while we have fresh node data
+    const changed =
+      state.nodeAlias  !== (data?.user?.alias       ?? state.nodeAlias)  ||
+      state.userUuid   !== (data?.user?.uuid         ?? state.userUuid)   ||
+      state.deviceUuid !== (data?.app?.device_uuid   ?? state.deviceUuid) ||
+      state.deviceAlias !== (data?.app?.device_alias ?? state.deviceAlias);
+    state.nodeAlias   = data?.user?.alias       ?? state.nodeAlias;
+    state.userUuid    = data?.user?.uuid         ?? state.userUuid;
+    state.deviceUuid  = data?.app?.device_uuid   ?? data?.device?.uuid ?? state.deviceUuid;
+    state.deviceAlias = data?.app?.device_alias  ?? state.deviceAlias;
+    if (changed) pushSSE({ type: 'status', status: getStatus() });
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: err.message });
