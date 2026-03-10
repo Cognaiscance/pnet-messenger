@@ -413,7 +413,7 @@
       if (recipientMode === 'contact') {
         canSend = !!(selectedContact && targetDeviceEl.value.trim() && targetAppEl.value.trim());
       } else {
-        canSend = !!(selectedDevice && selectedApp);
+        canSend = !!(myInfo.user_uuid && selectedDevice && selectedApp);
       }
     }
     msgInput.disabled = !canSend;
@@ -471,7 +471,7 @@
       toDeviceUuid = targetDeviceEl.value.trim();
       toAppUuid    = targetAppEl.value.trim();
     } else {
-      if (!selectedDevice || !selectedApp) return;
+      if (!selectedDevice || !selectedApp || !myInfo.user_uuid) return;
       toUserUuid  = myInfo.user_uuid;
       toDeviceUuid = selectedDevice.uuid;
       toAppUuid    = selectedApp.app_uuid;
