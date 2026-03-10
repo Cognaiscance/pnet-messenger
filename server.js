@@ -66,18 +66,23 @@ async function register() {
       body: JSON.stringify(body),
     });
 
-    if (res.ok) {
+    if (res.status === 201) {
       const data = await res.json();
-      console.log('[register] pnet responded:', data);
+      console.log('[register] Registration successful — api_key received');
+      state.pnetApiKey = data.api_key;
       state.registered = true;
+      state.approved = true;
+      config.saveFile(config.PNET_KEY_FILE, data.api_key);
       pushSSE({ type: 'status', status: getStatus() });
-      return; // success – wait for /receive_key callback
+      fetchNodeInfo();
+      return;
     } else if (res.status === 422) {
-      // Already registered — don't retry, just wait for /receive_key
-      const text = await res.text();
-      console.warn(`[register] Already registered with pnet (422): ${text}`);
-      state.registered = true;
-      pushSSE({ type: 'status', status: getStatus() });
+      // UUID already registered but we have no saved key — state is unrecoverable
+      // without re-registering under a new UUID.
+      console.error(
+        '[register] Already registered with pnet but no API key saved. ' +
+        'Delete .app_uuid and .pnet_api_key then restart to re-register.'
+      );
       return;
     } else {
       const text = await res.text();
@@ -87,7 +92,7 @@ async function register() {
     console.warn('[register] Could not reach pnet, retrying in 10 s:', err.message);
   }
 
-  // Retry after 10 seconds (only on network errors, not on 422)
+  // Retry after 10 seconds on network errors
   setTimeout(register, 10_000);
 }
 
@@ -125,24 +130,36 @@ function getStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Poll pnet for queued inbound messages (catches messages missed while offline)
+// ---------------------------------------------------------------------------
+async function pollMessages() {
+  if (!state.approved) return;
+  try {
+    const res = await pnetFetch('/api/messages');
+    if (!res.ok) return;
+    const data = await res.json();
+    for (const m of data.messages ?? []) {
+      const msg = {
+        id: `pnet-${m.id}`,
+        direction: 'received',
+        from_user_uuid:   m.from_user_uuid,
+        from_device_uuid: m.from_device_uuid,
+        text:             m.payload,
+        timestamp:        m.received_at,
+      };
+      if (!state.messages.find(x => x.id === msg.id)) {
+        console.log('[pollMessages] Received queued message from', m.from_user_uuid);
+        addMessage(msg);
+      }
+    }
+  } catch (err) {
+    console.warn('[pollMessages] Failed:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Callbacks from pnet
 // ---------------------------------------------------------------------------
-
-// POST /receive_key — pnet calls this after user approves our registration
-app.post('/receive_key', (req, res) => {
-  const { api_key } = req.body;
-  if (!api_key) {
-    return res.status(400).json({ error: 'Missing api_key' });
-  }
-  console.log('[receive_key] Received pnet api_key');
-  state.pnetApiKey = api_key;
-  state.approved = true;
-  config.saveFile(config.PNET_KEY_FILE, api_key);
-  res.json({ ok: true });
-
-  // Kick off a node info fetch to get our alias
-  fetchNodeInfo();
-});
 
 // POST /receive_message — pnet calls this when we have an incoming message
 app.post('/receive_message', (req, res) => {
@@ -184,7 +201,7 @@ app.get('/api/status', (_req, res) => {
 // GET /api/contacts — proxy to pnet /api/node, return contacts
 app.get('/api/contacts', async (_req, res) => {
   if (!state.approved) {
-    return res.status(503).json({ error: 'Not yet approved by pnet' });
+    return res.status(503).json({ error: 'Not yet registered with pnet' });
   }
   try {
     const pnetRes = await pnetFetch('/api/node');
@@ -207,7 +224,7 @@ app.get('/api/contacts', async (_req, res) => {
 // GET /api/node — full node info (so the frontend can get device lists)
 app.get('/api/node', async (_req, res) => {
   if (!state.approved) {
-    return res.status(503).json({ error: 'Not yet approved by pnet' });
+    return res.status(503).json({ error: 'Not yet registered with pnet' });
   }
   try {
     const pnetRes = await pnetFetch('/api/node');
@@ -225,7 +242,7 @@ app.get('/api/node', async (_req, res) => {
 // POST /api/send — proxy to pnet /api/send
 app.post('/api/send', async (req, res) => {
   if (!state.approved) {
-    return res.status(503).json({ error: 'Not yet approved by pnet' });
+    return res.status(503).json({ error: 'Not yet registered with pnet' });
   }
   const { to_user_uuid, to_device_uuid, to_app_uuid, payload } = req.body;
   if (!to_user_uuid || !payload) {
@@ -302,9 +319,14 @@ app.listen(config.APP_PORT, () => {
   console.log(`APP_UUID: ${config.APP_UUID}`);
   console.log(`APP_HOST: ${config.APP_HOST}`);
   console.log(`PNET_URL: ${config.PNET_URL}`);
+
+  // Poll pnet for queued messages every 30 seconds
+  setInterval(pollMessages, 30_000);
+
   if (config.PNET_API_KEY) {
     console.log('[startup] Found persisted pnet api_key — skipping registration');
     fetchNodeInfo();
+    pollMessages();
   } else {
     register();
   }
