@@ -1,4 +1,5 @@
 node_modules/
 .app_uuid
 .app_api_key
+.pnet_api_key
 .env
